@@ -16,6 +16,12 @@ Overall deadline July 31st 2023 (paper draft deadline)
 
 ResNet-18
 
+train baseline model:
+```bash
+export PYTHONPATH="${PYTHONPATH}:${PWD}/common
+python common/train.py
+```
+
 ## Data
 
 * Sen12MS Dataset (training/validation)
