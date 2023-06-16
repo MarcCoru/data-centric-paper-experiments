@@ -2,8 +2,9 @@ s1bands = ["S1VV", "S1VH"]
 s2bands = ["S2B1", "S2B2", "S2B3", "S2B4", "S2B5", "S2B6", "S2B7", "S2B8", "S2B8A", "S2B9", "S2B10", "S2B11", "S2B12"]
 bands = s1bands + s2bands
 
-H5URL = "https://syncandshare.lrz.de/dl/fiDJwH3ZgzcoDts3srTT8XaA/sen12ms.h5"
-CSVURL = "https://syncandshare.lrz.de/dl/fiHr4oDKXzPSPYnPRWNxAqnk/sen12ms.csv"
+H5URL = "https://meta-learning-land-cover.s3.eu-central-1.amazonaws.com/sen12ms.h5"
+CSVURL = "https://meta-learning-land-cover.s3.eu-central-1.amazonaws.com/sen12ms.csv"
+
 CSVSIZE = 47302099
 H5SIZE = 115351475848
 
