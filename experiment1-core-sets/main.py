@@ -59,7 +59,7 @@ def main():
     coeffs = kernel_mean_matching(X, Z, kern='rbf', B=10, sigma=10)
 
     plt.figure()
-    plt.scatter(features_pca[~mask, 0], features_pca[~mask, 1], s=coeffs*10 + 1)
+    plt.scatter(features_pca[~mask, 0], features_pca[~mask, 1], s=coeffs*10 + 1, cmap="Reds")
     plt.scatter(features_pca[mask, 0], features_pca[mask, 1], s=50)
     plt.title("coeffs")
 
@@ -73,6 +73,17 @@ def main():
     ax.scatter(lon[mask], lat[mask], s=10)
 
     plt.show()
+
+    idxs = np.argsort(coeffs[:,0])
+    coeffs_srt = coeffs[idxs]
+
+    idxs_ = idxs[-16:]
+
+    fig, axs = plt.subplots(4,4, figsize=(20,20))
+    for ax, img, c, id in zip(axs.reshape(-1), rgb[idxs_], coeffs_srt[idxs_], ids[idxs_]):
+        ax.imshow(img.transpose(1, 2, 0))
+        ax.set_title(str(id))
+        ax.axis("off")
 
     print()
 
