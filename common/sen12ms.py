@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 import lightning.pytorch as pl
 from torch.utils.data import Dataset, DataLoader
+from common.transforms import get_classification_transform
 
 class AllSen12MSDataset(Dataset):
     def __init__(self, root, fold, transform, classes=None, seasons=None):
@@ -115,8 +116,6 @@ class RegionSen12MSDataset(torch.utils.data.Dataset):
         image, target = self.transform(s1, s2, label)
 
         return image, target, path.h5path
-
-from transforms import get_classification_transform
 
 class Sen12MSDataModule(pl.LightningDataModule):
     def __init__(self, root="/data/sen12ms", batch_size=32, workers=8, split="random"):

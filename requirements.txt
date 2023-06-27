@@ -7,3 +7,8 @@ h5py
 lightning
 torchvision
 wandb
+scikit-learn
+matplotlib
+cvxopt
+geopandas
+scikit-image
