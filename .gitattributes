@@ -1,0 +1,2 @@
+*.ckpt filter=lfs diff=lfs merge=lfs -text
+weights/RN18-epochepoch=15-val_lossval_loss=0.43.ckpt filter=lfs diff=lfs merge=lfs -text
