@@ -22,70 +22,84 @@ dataroot = "/data/sen12ms"
 def main():
     features, ids, rgb = extract_features()
 
+    # much simpler debugging features
+    #features = rgb.mean(axis=(-1,-2))
+
     # subsample
-    msk = np.random.rand(features.shape[0]) > 0.9
-    features, ids = features[msk], ids[msk]
+    msk = np.random.rand(features.shape[0]) > 0.75
+    features, ids, rgb = features[msk], ids[msk], rgb[msk]
+    def plot_sample(rgb, coeffs, idx):
+        plt.figure()
+        plt.imshow(rgb[idx].transpose(1,2,0))
+        plt.title(f"{ids[idx]}-{coeffs[idx]}")
+        plt.show()
 
     season, region, classname, tile = list(zip(*[id.split("/") for id in ids]))
     lon, lat = list(zip(*[regionlonlat[int(r)] for r in region]))
     lon, lat = np.array(lon), np.array(lat)
     # jitter
-    lon, lat = lon + np.random.rand(lon.shape[0]) * 15, lat + np.random.rand(lon.shape[0]) * 15
+    #lon, lat = lon + np.random.rand(lon.shape[0]) * 15, lat + np.random.rand(lon.shape[0]) * 15
 
     print(np.unique(region))
 
-    #mask = np.stack([c == "Croplands" for c in classname])
-    #features = features[mask]
-    #season, region, classname = np.array(season)[mask], np.array(region)[mask], np.array(classname)[mask]
-    #lon, lat = lon[mask], lat[mask]
+    if True:
+        ## Filter by class
+        mask = np.stack([c == "Urban_Build-up" for c in classname])
+        features = features[mask]
+        ids = ids[mask]
+        season, region, classname = np.array(season)[mask], np.array(region)[mask], np.array(classname)[mask]
+        lon, lat = lon[mask], lat[mask]
+        rgb = rgb[mask]
 
-    mask = np.stack([r == "4" for r in region])
-    features_pca = TSNE(n_components=2).fit_transform(features)
+    region_mask = np.stack([r == "109" for r in region])
 
-    def to_idx(arr):
-        uniques = list(np.unique(arr))
-        return [uniques.index(s) for s in arr]
+    Z = features[~region_mask]
+    X = features[region_mask]
+
+    coeffs = kernel_mean_matching(X, Z, kern='rbf', B=5, sigma=2)
+    #coeffs = kernel_mean_matching(X, Z, kern='lin', B=3)
 
 
-    plt.figure()
-    plt.scatter(features_pca[:, 0], features_pca[:, 1], c=mask, cmap="Spectral")
-    plt.title("region")
-
+    plot_tsne(features, coeffs, region_mask)
     plt.show()
 
-    Z = features[~mask]
-    X = features[mask]
-
-    coeffs = kernel_mean_matching(X, Z, kern='rbf', B=10, sigma=10)
-
-    plt.figure()
-    plt.scatter(features_pca[~mask, 0], features_pca[~mask, 1], s=coeffs*10 + 1, cmap="Reds")
-    plt.scatter(features_pca[mask, 0], features_pca[mask, 1], s=50)
-    plt.title("coeffs")
-
+    # Histogram
     plt.figure()
     plt.hist(coeffs)
 
     fig, ax = plt.subplots()
     world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
     world.plot(ax=ax, color="gray")
-    ax.scatter(lon[~mask], lat[~mask], c=coeffs*5, s=coeffs*2 + 1, cmap="Reds") # , edgecolor="white")
-    ax.scatter(lon[mask], lat[mask], s=10)
+    ax.scatter(lon[~region_mask], lat[~region_mask], c=coeffs*5, s=coeffs*2 + 1, cmap="Reds") # , edgecolor="white")
+    ax.scatter(lon[region_mask], lat[region_mask], s=10)
 
     plt.show()
 
     idxs = np.argsort(coeffs[:,0])
-    coeffs_srt = coeffs[idxs]
 
-    idxs_ = idxs[-16:]
+    fig, axs = plt.subplots(3, 8, figsize=(8 * 3, 3 * 3))
 
-    fig, axs = plt.subplots(4,4, figsize=(20,20))
-    for ax, img, c, id in zip(axs.reshape(-1), rgb[idxs_], coeffs_srt[idxs_], ids[idxs_]):
+    ## Base classes
+    for ax, img, id in zip(axs[0], rgb[region_mask], ids[region_mask]):
         ax.imshow(img.transpose(1, 2, 0))
         ax.set_title(str(id))
         ax.axis("off")
 
-    print()
+    ## Most similar
+    idxs_ = idxs[-8:]
+    for ax, img, c, id in zip(axs[1], rgb[idxs_], coeffs[idxs_], ids[idxs_]):
+        ax.imshow(img.transpose(1, 2, 0))
+        ax.set_title(str(id) + f" ({float(c):.2f})")
+        ax.axis("off")
+
+    ## Least similar
+    idxs_ = idxs[:8]
+    for ax, img, c, id in zip(axs[2], rgb[idxs_], coeffs[idxs_], ids[idxs_]):
+        ax.imshow(img.transpose(1, 2, 0))
+        ax.set_title(str(id) + f" ({float(c):.2f})")
+        ax.axis("off")
+
+    plt.show()
 
 
 
@@ -158,6 +172,15 @@ def extract_features():
         np.savez("features.npz", features=features, ids=ids, rgb=rgb)
 
     return features, ids, rgb
+
+def plot_tsne(features, coeffs, mask):
+    features_pca = PCA(n_components=2).fit_transform(features)
+
+    plt.figure()
+    plt.scatter(features_pca[~mask, 0], features_pca[~mask, 1], s=coeffs*10 + 1, cmap="Reds")
+    plt.scatter(features_pca[mask, 0], features_pca[mask, 1], s=50)
+    plt.title("coeffs")
+
 
 
 if __name__ == '__main__':
