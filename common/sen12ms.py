@@ -143,3 +143,28 @@ class Sen12MSDataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.evalu_ds, batch_size=self.batch_size, shuffle=False)
+
+
+class Sen12MSBatchLoader:
+    def __init__(self, root, train_scores, transform):
+        super().__init__()
+        self.root = root
+        self.train_scores = train_scores
+        self.h5file_path = os.path.join(root, "sen12ms.h5")
+        self.transform = transform
+
+    def get_batch(self, batch_indexes):
+        images = torch.empty((len(batch_indexes), 15, 128, 128))
+        targets = []
+        with h5py.File(self.h5file_path, 'r') as data:
+            for i, index in enumerate(batch_indexes):
+                s2 = data[self.train_scores[index][0] + "/s2"][()]
+                s1 = data[self.train_scores[index][0] + "/s1"][()]
+                label = data[self.train_scores[index][0] + "/lc"][()]
+
+                image, target = self.transform(s1, s2, label)
+                images[i] = image
+                targets.append(target)
+
+        # print(images.shape, len(targets))
+        return images, torch.from_numpy(np.asarray(targets))

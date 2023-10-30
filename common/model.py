@@ -5,11 +5,12 @@ from torchvision import models
 import lightning.pytorch as pl
 from torch import optim, nn
 
+
 class ResNet18(pl.LightningModule):
     def __init__(self, in_channels, num_classes, lr=1e-3, weight_decay=1e-05):
         super().__init__()
         self.lr = lr
-        self.weight_decay=weight_decay
+        self.weight_decay = weight_decay
 
         self.model = models.resnet18()
 
@@ -29,7 +30,7 @@ class ResNet18(pl.LightningModule):
 
     def configure_optimizers(self):
         return optim.AdamW(self.model.parameters(), self.lr,
-                                weight_decay=self.weight_decay)
+                           weight_decay=self.weight_decay)
 
     def training_step(self, batch, batch_idx):
         # "batch" is the output of the training data loader.
@@ -56,7 +57,7 @@ class ResNet18(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         imgs, labels, path = batch
         logits = self.model(imgs.float())
-        loss = self.criterion(preds, labels)
+        loss = self.criterion(logits, labels)
         preds = logits.argmax(dim=-1)
         acc = (labels == preds).float().mean()
         # By default logs it per epoch (weighted average over batches)

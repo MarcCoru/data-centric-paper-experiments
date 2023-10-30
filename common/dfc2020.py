@@ -1,9 +1,13 @@
-from torch.utils.data import Dataset
 import os
-import glob
-import pandas as pd
+
+import numpy as np
 import rasterio
-import tqdm
+from glob import glob
+import pandas as pd
+from tqdm import tqdm
+
+from torch.utils.data import Dataset
+
 
 class DFCDataset(Dataset):
     def __init__(self, dfcpath, region, transform):
@@ -16,7 +20,6 @@ class DFCDataset(Dataset):
             print(f"loading {indexfile}")
             index = pd.read_csv(indexfile)
         else:
-
             tifs = glob(os.path.join(dfcpath, "*/dfc_*/*.tif"))
 
             index_dict = []
@@ -74,8 +77,10 @@ class DFCDataset(Dataset):
 
         index = index.reset_index()
         self.index = index.set_index(["region", "season"])
-        self.index = self.index.loc[region]
+        if region is not None:
+            self.index = self.index.loc[region]
         self.region_seasons = self.index.index.unique().tolist()
+        print(self.region_seasons)
         self.index.sort_index()
 
     def __len__(self):
