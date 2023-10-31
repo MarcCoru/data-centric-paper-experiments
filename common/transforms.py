@@ -6,6 +6,19 @@ import torch
 from common.data import IGBP_simplified_class_mapping
 from common.data import s2bands
 
+def augmentation(input):
+    if np.random.rand() < 0.5:
+        input = input[:, ::-1, :]
+
+    # horizontal flip
+    if np.random.rand() < 0.5:
+        input = input[:, :, ::-1]
+
+    # rotate
+    n_rotations = np.random.choice([0, 1, 2, 3])
+    input = np.rot90(input, k=n_rotations, axes=(1, 2)).copy()
+    return input
+
 def random_crop(img, width=32, height=32):
     x = random.randint(0, img.shape[1] - width)
     y = random.randint(0, img.shape[2] - height)

@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, cohen_ka
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from common.dfc2020 import DFCDataset
+from common.dfc2020_old import DFCDataset
 from common.model import ResNet18
 from common.transforms import get_classification_transform
 

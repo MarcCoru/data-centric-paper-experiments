@@ -1,3 +1,8 @@
 .idea/
 common/__pycache__/
 wandb/
+datasets/dfc_0
+datasets/dfc_validation
+datasets/s2_0
+datasets/s2_validation
+
