@@ -8,7 +8,7 @@ ResNet-18
 
 train baseline model:
 ```bash
-export PYTHONPATH="${PYTHONPATH}:${PWD}/common
+export PYTHONPATH="${PYTHONPATH}:${PWD}/common"
 python common/train.py
 ```
 

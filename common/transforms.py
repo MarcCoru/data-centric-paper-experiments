@@ -3,9 +3,6 @@ import random
 import numpy as np
 import torch
 
-from common.data import IGBP_simplified_class_mapping
-from common.data import s2bands
-
 def augmentation(input):
     if np.random.rand() < 0.5:
         input = input[:, ::-1, :]

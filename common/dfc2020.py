@@ -11,6 +11,8 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 import torch
 from torch.utils.data import Dataset
 
+
+
 def augmentation(input):
     if np.random.rand() < 0.5:
         input = torch.fliplr(input)

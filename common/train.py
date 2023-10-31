@@ -8,28 +8,48 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from model import ResNet18
+import argparse
 
-datamodule = DFC2020DataModule(root="datasets", batch_size=512, workers=2)
+def parse_args():
+    parser = argparse.ArgumentParser(description='A simple script with argparse')
 
-model = ResNet18(in_channels=10, num_classes=8)
+    # Add optional arguments
+    parser.add_argument('--batchsize', type=int, default=64)
+    parser.add_argument('--num-workers', type=int, default=16)
+    parser.add_argument('--max-epochs', type=int, default=100)
+    parser.add_argument('--dataset-root', type=str, default="datasets")
+    parser.add_argument('--accelerator', type=str, default="auto")
+    parser.add_argument('--fast-dev-run', action='store_true')
 
-wandb_logger = WandbLogger(project="datacentric-paper")
+    # Parse command-line arguments
+    args = parser.parse_args()
+    return args
+def main(args):
+    datamodule = DFC2020DataModule(root=args.dataset_root, batch_size=args.batchsize, workers=args.num_workers)
 
-callbacks = [
-    EarlyStopping(monitor="val_loss", mode="min", patience=10),
-    ModelCheckpoint(
-        dirpath='weights',
-        monitor='val_loss',
-        filename='RN18-epoch{epoch:02d}-val_loss{val_loss:.2f}',
-        save_last=True
-    )
-]
+    model = ResNet18(in_channels=10, num_classes=8)
 
-trainer = pl.Trainer(
-    max_epochs=100,
-    log_every_n_steps=5,
-    fast_dev_run=False,
-    callbacks=callbacks,
-    logger=wandb_logger)
+    wandb_logger = WandbLogger(project="datacentric-paper")
 
-trainer.fit(model=model, datamodule=datamodule)
+    callbacks = [
+        ModelCheckpoint(
+            dirpath='weights',
+            monitor='val_loss',
+            filename='RN18-epoch{epoch:02d}-val_loss{val_loss:.2f}',
+            save_last=True
+        )
+    ]
+
+    trainer = pl.Trainer(
+        max_epochs=args.max_epochs,
+        log_every_n_steps=5,
+        fast_dev_run=args.fast_dev_run,
+        accelerator=args.accelerator,
+        callbacks=callbacks,
+        logger=wandb_logger)
+
+    trainer.fit(model=model, datamodule=datamodule)
+
+if __name__ == '__main__':
+    args = parse_args()
+    main(args)

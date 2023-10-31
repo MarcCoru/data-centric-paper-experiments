@@ -34,6 +34,11 @@ class TestDFCDataModule(unittest.TestCase):
             self.assertEqual(X.shape, torch.Size([32, 10, 256, 256]))
             break
 
+        # run through all batches
+        [batch for batch in dm.train_dataloader()]
+        [batch for batch in dm.val_dataloader()]
+        [batch for batch in dm.test_dataloader()]
+
 
 if __name__ == '__main__':
     unittest.main()
