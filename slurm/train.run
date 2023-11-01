@@ -1,10 +1,11 @@
 #!/bin/bash
-#SBATCH --time=240
+#SBATCH --time=520
 #SBATCH --mem=24G
 #SBATCH --cpus-per-task=16
 #SBATCH --job-name=train.py
 #SBATCH --gres=gpu:1
 #SBATCH --partition=gpu
 
+source venv/bin/activate
 export PYTHONPATH="${PYTHONPATH}:${PWD}/common"
-python common/train.py --batchsize 32 --num-workers 16
+python common/train.py --batchsize 32 --num-workers 16 --max-epochs 1000
