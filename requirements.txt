@@ -12,3 +12,4 @@ matplotlib
 cvxopt
 geopandas
 scikit-image
+gdown

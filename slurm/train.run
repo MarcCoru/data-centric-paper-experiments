@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time=520
+#SBATCH --time=240
 #SBATCH --mem=24G
 #SBATCH --cpus-per-task=16
 #SBATCH --job-name=train.py
@@ -8,4 +8,4 @@
 
 source venv/bin/activate
 export PYTHONPATH="${PYTHONPATH}:${PWD}/common"
-python common/train.py --batchsize 32 --num-workers 16 --max-epochs 1000
+python common/train.py --batchsize 256 --num-workers 16 --max-epochs 1000
