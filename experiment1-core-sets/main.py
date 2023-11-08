@@ -1,6 +1,6 @@
 from common.model import ResNet18
-from common.sen12ms import Sen12MSDataModule
-from common.data import regionlonlat
+from common.dfc2020_datamodule import DFC2020DataModule
+from common.dfc_region_dataset import DFCRegionDataset, regions, bands
 from tqdm import tqdm
 import torch
 from torch import nn
@@ -11,97 +11,172 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import geopandas as gpd
 from skimage.exposure import equalize_hist
+import pandas as pd
+import seaborn as sns
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+
+import adapt
+
+papercolors = {
+    'prussianblue': '#04233A',
+    'pennred': '#990000',
+    'lapislazuli': '#3F6493',
+    'sage': '#A4B494',
+    'earthyellow': '#FFA552',
+    'hookersgreen': '#59827A',
+    'pearl': '#E0DCC2',
+    'slategray': '#9AB5C4',
+    'bittersweetshimmer': '#CC444B',
+    'coral': '#FC7A57',
+    'lightcoral': '#F28482',
+    'burntsienna': '#EE6C4D',
+    'skymagenta': '#B37BA4',
+}
+
+colors = {
+    'KippaRing': '#E0DCC2',       # Pearl
+    'MexicoCity': '#59827A',      # Hookers Green
+    'CapeTown': '#CC444B',        # Bittersweet Shimmer
+    'BandarAnzali': '#9AB5C4',    # Slate Gray
+    'Mumbai': '#F28482',          # Light Coral
+    'BlackForest': '#04233A',     # prussianblue
+    'Chabarovsk': '#B37BA4'       # Sky Magenta
+}
+
+source_domain_color = papercolors["prussianblue"]
+target_domain_color = papercolors["burntsienna"]
+
+coordinates = {
+    "BandarAnzali": (37.4686457254962, 49.474444963107395),
+    "Mumbai": (19.088602296879547, 72.87157484146893),
+    "MexicoCity": (19.43202018506947, -99.1195237076458),
+    "CapeTown": (-33.926504094383525, 18.482963100299195),
+    "BlackForest": (48.28424998396387, 7.994630448217265),
+    "Chabarovsk": (48.48742588965333, 135.07296238176582),
+    "KippaRing": (-27.224253825057243, 153.08326748125538)
+}
 
 import math
 from cvxopt import matrix, solvers
 
-features_file = "features.npz"
-checkpoint = "weights/RN18-epochepoch=15-val_lossval_loss=0.43.ckpt"
-dataroot = "/data/sen12ms"
+checkpoint = "weights/RN18-epochepoch=123-val_lossval_loss=0.23.ckpt"
+
+DFCPATH = "/Users/marc/projects/data-centric-paper-experiments/datasets/DFC_Public_Dataset"
+DEVICE = "cpu"
+
+target_region_name = "KippaRing"
+
 
 def main():
-    features, ids, rgb = extract_features()
+    #(train_features, train_ids, train_rgb), (test_features, test_ids, test_rgb) = extract_features()
 
-    # much simpler debugging features
-    #features = rgb.mean(axis=(-1,-2))
+    def get_avg_bands(s2):
+        s2 = s2 * 1e-4
+        return s2.mean(1).mean(1)
 
-    # subsample
-    msk = np.random.rand(features.shape[0]) > 0.75
-    features, ids, rgb = features[msk], ids[msk], rgb[msk]
-    def plot_sample(rgb, coeffs, idx):
-        plt.figure()
-        plt.imshow(rgb[idx].transpose(1,2,0))
-        plt.title(f"{ids[idx]}-{coeffs[idx]}")
-        plt.show()
+    if not os.path.exists("exp1_data.npz"):
+        X, y, reg = [], [], []
+        for regionname, regionseason in tqdm(regions):
+            ds = DFCRegionDataset(dfcpath=DFCPATH, region=(regionname, regionseason), transform=get_avg_bands)
 
-    season, region, classname, tile = list(zip(*[id.split("/") for id in ids]))
-    lon, lat = list(zip(*[regionlonlat[int(r)] for r in region]))
-    lon, lat = np.array(lon), np.array(lat)
-    # jitter
-    #lon, lat = lon + np.random.rand(lon.shape[0]) * 15, lat + np.random.rand(lon.shape[0]) * 15
+            for i in range(len(ds)):
+                s2, id = ds[i]
+                X.append(s2)
+                y.append(id)
+                reg.append(regionname)
 
-    print(np.unique(region))
+        X = np.stack(X)
+        y = np.stack(y)
+        reg = np.stack(reg)
+        c = np.array([colors[r] for r in reg])
+        np.savez("exp1_data.npz", X=X, y=y, reg=reg, c=c)
+    else:
+        f = np.load("exp1_data.npz")
+        X, y, reg, c = f["X"], f["y"], f["reg"], f["c"]
 
-    if True:
-        ## Filter by class
-        mask = np.stack([c == "Urban_Build-up" for c in classname])
-        features = features[mask]
-        ids = ids[mask]
-        season, region, classname = np.array(season)[mask], np.array(region)[mask], np.array(classname)[mask]
-        lon, lat = lon[mask], lat[mask]
-        rgb = rgb[mask]
-
-    region_mask = np.stack([r == "109" for r in region])
-
-    Z = features[~region_mask]
-    X = features[region_mask]
-
-    coeffs = kernel_mean_matching(X, Z, kern='rbf', B=5, sigma=2)
-    #coeffs = kernel_mean_matching(X, Z, kern='lin', B=3)
-
-
-    plot_tsne(features, coeffs, region_mask)
-    plt.show()
-
-    # Histogram
-    plt.figure()
-    plt.hist(coeffs)
+    idxs = np.arange(X.shape[0], dtype=np.int32)
+    np.random.shuffle(idxs)
 
     fig, ax = plt.subplots()
+    ax.scatter(X[idxs,bands.index("S2B4")], X[idxs,bands.index("S2B8")], c=c[idxs], alpha=0.5)
+    ax.set_xlabel("red surface reflectance in %")
+    ax.set_ylabel("near-infrared surface reflectance in %")
+    plt.show()
+
+    mask = reg == target_region_name
+    target_features = X[mask]
+    target_c = c[mask]
+    target_y = y[mask]
+    target_reg = reg[mask]
+
+    source_features = X[~mask]
+    source_c = c[~mask]
+    source_reg = reg[~mask]
+    source_y = y[~mask]
+
+    model = adapt.instance_based.KMM(estimator=RandomForestClassifier(random_state=0), Xt=None, kernel='linear', B=10., eps=None, max_size=1000, tol=None,
+                             max_iter=100, copy=True, verbose=1, random_state=0)
+    model.fit(source_features, source_y, Xt=target_features)
+    target_y_pred = model.predict(target_features)
+
+    print("with adapt")
+    print(classification_report(y_true=target_y, y_pred=target_y_pred))
+    print(accuracy_score(y_true=target_y, y_pred=target_y_pred))
+
+    print("without coeffs")
+    clf = RandomForestClassifier(random_state=0)
+
+    clf.fit(source_features, source_y)
+    target_y_pred = clf.predict(target_features)
+
+    print(classification_report(y_true=target_y, y_pred=target_y_pred))
+    print(accuracy_score(y_true=target_y, y_pred=target_y_pred))
+
+    coeffs = kernel_mean_matching(target_features, source_features, kern='lin', B=10.)
+
+
+    print("with coeffs")
+    # with coefficients
+    clf = RandomForestClassifier(random_state=0)
+    clf.fit(source_features, source_y, sample_weight=coeffs[:,0])
+    target_y_pred = clf.predict(target_features)
+
+    print(classification_report(y_true=target_y, y_pred=target_y_pred))
+    print(accuracy_score(y_true=target_y, y_pred=target_y_pred))
+
+    fig, ax = plt.subplots()
+    ax.hist(coeffs)
+    plt.show()
+
+    fig, ax = plt.subplots()
+    ax.scatter(source_features[:, bands.index("S2B4")], source_features[:, bands.index("S2B8")], s=coeffs*5+1, c=source_domain_color, alpha=0.5)
+    ax.scatter(target_features[:, bands.index("S2B4")], target_features[:, bands.index("S2B8")], marker="*", c=target_domain_color, s=30, alpha=0.5)
+    ax.set_xlabel("red surface reflectance in %")
+    ax.set_ylabel("near-infrared surface reflectance in %")
+    ax.set_xlim(0,0.25)
+    ax.set_ylim(0, 0.4)
+    sns.despine(ax=None, top=True, right=True, left=False, bottom=False, offset=10, trim=True)
+    plt.show()
+
+    df = pd.DataFrame([source_reg, coeffs[:, 0]], index=["region", "coeff"]).T
+    coeff_by_region = df.groupby("region").mean()
+
     world = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-    world.plot(ax=ax, color="gray")
-    ax.scatter(lon[~region_mask], lat[~region_mask], c=coeffs*5, s=coeffs*2 + 1, cmap="Reds") # , edgecolor="white")
-    ax.scatter(lon[region_mask], lat[region_mask], s=10)
+    coords = np.array(list(coordinates.values()))
+    coords_names = np.array(list(coordinates.keys()))
+    is_target_region = coords_names == target_region_name
+    #coords = coords[~is_target_region]
 
+    fig, ax = plt.subplots()
+    world.plot(ax=ax, color='lightgray')
+    ax.scatter(coords[~is_target_region,1], coords[~is_target_region,0], c=source_domain_color, s = 1+coeff_by_region["coeff"].values.astype(float)*20)
+    ax.scatter(coords[is_target_region, 1], coords[is_target_region, 0], c=target_domain_color, s=200, marker="*")
+    sns.despine(ax=None, top=True, right=True, left=True, bottom=True, offset=0, trim=False)
+    ax.set_xlabel("longitude in degree")
+    ax.set_ylabel("latitude in degree")
     plt.show()
-
-    idxs = np.argsort(coeffs[:,0])
-
-    fig, axs = plt.subplots(3, 8, figsize=(8 * 3, 3 * 3))
-
-    ## Base classes
-    for ax, img, id in zip(axs[0], rgb[region_mask], ids[region_mask]):
-        ax.imshow(img.transpose(1, 2, 0))
-        ax.set_title(str(id))
-        ax.axis("off")
-
-    ## Most similar
-    idxs_ = idxs[-8:]
-    for ax, img, c, id in zip(axs[1], rgb[idxs_], coeffs[idxs_], ids[idxs_]):
-        ax.imshow(img.transpose(1, 2, 0))
-        ax.set_title(str(id) + f" ({float(c):.2f})")
-        ax.axis("off")
-
-    ## Least similar
-    idxs_ = idxs[:8]
-    for ax, img, c, id in zip(axs[2], rgb[idxs_], coeffs[idxs_], ids[idxs_]):
-        ax.imshow(img.transpose(1, 2, 0))
-        ax.set_title(str(id) + f" ({float(c):.2f})")
-        ax.axis("off")
-
-    plt.show()
-
-
 
 # an implementation of Kernel Mean Matching
 # referenres:
@@ -136,42 +211,54 @@ def compute_rbf(X, Z, sigma=1.0):
         K[i, :] = np.exp(-np.sum((vx - Z) ** 2, axis=1) / (2.0 * sigma))
     return K
 
-def extract_features():
+def extract_features(overwrite=True):
     """
     either recomputes features from a model and the dataset or loads cached features
     :return: features and ids
     """
-    if os.path.exists(features_file):
-        features, ids, rgb = np.load("features.npz").values()
-    else:
 
-        datamodule = Sen12MSDataModule(root=dataroot, batch_size=512, workers=32)
-        datamodule.setup("regionwise")
-
-        model = ResNet18.load_from_checkpoint(checkpoint)
-        model.eval()
-        # get features instead of class logits
-        model.model.fc = nn.Identity()
-        dl = datamodule.val_dataloader()
-
-        features, ids, rgb = [], [], []
+    def extract(ds):
+        features, rgb, ids = [], [], []
         with torch.no_grad():
-            for idx, batch in tqdm(enumerate(dl), total=len(dl)):
-                X,Y,id = batch
-                y_features = model(X.cuda().float())
+            for idx, (X,Y) in tqdm(enumerate(ds), total=len(ds)):
+                X = torch.tensor(X, device=DEVICE, dtype=torch.float)
+                y_features = model(X[None])
 
-                rgb.append(equalize_hist(X[:, np.array([4, 3, 2])].numpy()))
+                rgb.append(equalize_hist(X[np.array([4, 3, 2])].numpy()))
 
                 features.append(y_features.cpu().detach().numpy())
-                ids.append(id)
+                ids.append(idx)
 
         features = np.vstack(features)
-        ids = np.hstack(ids)
         rgb = np.vstack(rgb)
+        return features, ids, rgb
 
-        np.savez("features.npz", features=features, ids=ids, rgb=rgb)
 
-    return features, ids, rgb
+    datamodule = DFC2020DataModule()
+    datamodule.setup()
+
+    model = ResNet18.load_from_checkpoint(checkpoint)
+    model.eval()
+    # get features instead of class logits
+    model.model.fc = nn.Identity()
+
+    model = model.to(DEVICE)
+
+    if os.path.exists("train_features.npz") and not overwrite:
+        train_tuple = np.load("train_features.npz").values()
+    else:
+        features, ids, rgb = extract(datamodule.train_ds)
+        np.savez("train_features.npz", features=features, ids=ids, rgb=rgb)
+        train_tuple = (features, ids, rgb)
+
+    if os.path.exists("test_features.npz") and not overwrite:
+        test_tuple = np.load("test_features.npz").values()
+    else:
+        features, ids, rgb = extract(datamodule.test_ds)
+        np.savez("test_features.npz", features=features, ids=ids, rgb=rgb)
+        test_tuple = (features, ids, rgb)
+
+    return train_tuple, test_tuple
 
 def plot_tsne(features, coeffs, mask):
     features_pca = PCA(n_components=2).fit_transform(features)
