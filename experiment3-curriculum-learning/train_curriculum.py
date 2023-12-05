@@ -17,7 +17,8 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 
 from common.model import ResNet18
-from common.sen12ms import Sen12MSDataModule, Sen12MSBatchLoader
+from common.dfc2020_datamodule import DFC2020DataModule
+from common.dfc2020 import DFCDatasetBatchLoader
 from predict_dfc_val_test import test
 from utils import str2bool, generate_random_batch, ExponentDecayLRScheduler, save_best_models
 from common.transforms import get_classification_transform
@@ -46,14 +47,14 @@ from common.transforms import get_classification_transform
 # trainer.fit(model=model, datamodule=datamodule)
 
 
-def get_order(sen_dataset_path, weights):
+def get_order(dataset_path, weights):
     # creating training data loader
-    datamodule = Sen12MSDataModule(root=sen_dataset_path, batch_size=256, workers=8)
+    datamodule = DFC2020DataModule(root=dataset_path, batch_size=256, workers=8)
     datamodule.setup('train')
     train_dataloader = datamodule.train_dataloader()
 
     # creating model and loading weights
-    model = ResNet18(in_channels=15, num_classes=10)
+    model = ResNet18(in_channels=10, num_classes=8)
     model.load_state_dict(torch.load(weights)['state_dict'])
     model.cuda()
     model.eval()
@@ -64,8 +65,9 @@ def get_order(sen_dataset_path, weights):
     with torch.no_grad():
         # Iterating over batches.
         for i, data in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
-            # Obtaining input, label, and h5path
-            image, label, h5_path = data
+            # Obtaining input data, label, path
+            image, label, path = data[0], data[1], np.asarray(data[2])
+            # print(image.shape, label.shape, type(path), len(path), path[0:2])
 
             # Casting to cuda variables.
             inps_c = Variable(image).float().cuda()
@@ -75,15 +77,14 @@ def get_order(sen_dataset_path, weights):
             # Computing probabilities.
             soft_outs = F.softmax(logits, dim=1).cpu()
 
-            label = torch.unsqueeze(label, 1)
             soft_samples = torch.gather(soft_outs, 1, label)
 
             if first is True:
-                all_data = list(zip(h5_path, soft_samples.numpy(), label.cpu().numpy()))
+                all_data = list(zip(path, soft_samples.numpy(), label.cpu().numpy()))
                 # print(all_data[0], all_data[1], all_data[-1])
                 first = False
             else:
-                all_data = np.concatenate((all_data, list(zip(h5_path, soft_samples.numpy(), label.cpu().numpy()))))
+                all_data = np.concatenate((all_data, list(zip(path, soft_samples.numpy(), label.cpu().numpy()))))
                 # print(all_data[0], all_data[1], all_data[255])
                 # print(all_data[256], all_data[257])
                 # print(all_data.shape)
@@ -105,11 +106,11 @@ def rank_data_according_to_score(train_scores, reverse=False, random=False):
 
 
 def balance_order(order, train_scores):
-    num_classes = 10
+    num_classes = 8
 
     # size_each_class = len(train_scores) // num_classes  # this gets the average for each class
     bc = np.bincount(train_scores[:, 2].astype(int))
-    # this balances using the minimum - nonzero because of the snow class
+    # this balances using the minimum
     # https://isprs-annals.copernicus.org/articles/V-2-2021/101/2021/isprs-annals-V-2-2021-101-2021.pdf
     size_each_class = np.min(bc[np.nonzero(bc)])
     print('bincount, size per class', bc, size_each_class)
@@ -120,12 +121,48 @@ def balance_order(order, train_scores):
 
     new_order = []
     # take each group containing the next easiest image for each class,
-    # and putting them according to diffuclt-level in the new order
+    # and putting them according to difficult-level in the new order
     for group_idx in range(size_each_class):
         group = sorted([class_orders[cls][group_idx] for cls in range(num_classes) if class_orders[cls]])
         for idx in group:
             new_order.append(order[idx])
 
+    return new_order
+
+
+def balance_level_order(order, train_scores, level=100):
+    # Get min(total samples, 100) samples for each class
+    num_classes = 8
+
+    # size_each_class = len(train_scores) // num_classes  # this gets the average for each class
+    bc = np.bincount(train_scores[:, 2].astype(int))
+    # this balances using the minimum
+    # https://isprs-annals.copernicus.org/articles/V-2-2021/101/2021/isprs-annals-V-2-2021-101-2021.pdf
+    smallest_classes = np.nonzero((bc < level).astype(int))
+    other_classes = np.nonzero((bc >= level).astype(int))
+    print('bincount, index of class < 100 samples, and >= 100', bc, smallest_classes, other_classes)
+
+    # separate the samples per class
+    class_orders = []
+    for cls in range(num_classes):
+        class_orders.append([i for i in range(len(order)) if train_scores[order[i]][2] == cls])
+
+    # for the smallest classes, get all the samples
+    new_order = []
+    if smallest_classes:
+        for scl in smallest_classes[0]:
+            for i in class_orders[scl]:
+                new_order.append(order[i])
+
+    # take each group containing the next easiest image for each class,
+    # and putting them according to difficult-level in the new order
+    for group_idx in range(np.max(bc)):
+        group = sorted([class_orders[cls][group_idx] for cls in range(num_classes)
+                        if cls in other_classes[0] and class_orders[cls] and len(class_orders[cls]) > group_idx])
+        for idx in group:
+            new_order.append(order[idx])
+
+    print(len(new_order))
     return new_order
 
 
@@ -205,27 +242,27 @@ def val_step(val_loader, net, iter, total_iter):
     return acc, _sum / float(outs.shape[1]), conf_m
 
 
-def train(sen_dataset_path, train_scores, ranked_index_train_scores,
+def train(dataset_path, train_scores, ranked_index_train_scores,
           learning_rate, lr_decay_rate, minimal_lr, lr_batch_size, weight_decay,
           batch_increase, increase_amount, starting_percent,
           total_iter, batch_size, output_path):
     # training loader
-    dataloader = Sen12MSBatchLoader(sen_dataset_path, train_scores, get_classification_transform(augment=True))
+    dataloader = DFCDatasetBatchLoader(dataset_path, train_scores)
 
     data_index_function = exponent_data_function_generator(ranked_index_train_scores,
                                                            batch_increase, increase_amount, starting_percent)
 
     # get validation set
-    datamodule = Sen12MSDataModule(root=sen_dataset_path, batch_size=256, workers=8)
+    datamodule = DFC2020DataModule(root=dataset_path, batch_size=256, workers=8)
     datamodule.setup('train')
     val_dataloader = datamodule.val_dataloader()
 
     # creating model
-    model = ResNet18(in_channels=15, num_classes=10)
+    model = ResNet18(in_channels=10, num_classes=8)
     model.cuda()
 
     criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99))
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99))
     # create custom scheduler
     scheduler = ExponentDecayLRScheduler(optimizer, lr_decay_rate, minimal_lr, lr_batch_size, learning_rate)
 
@@ -242,6 +279,7 @@ def train(sen_dataset_path, train_scores, ranked_index_train_scores,
 
         # get current set of training data
         cur_indexes = data_index_function(batch)
+        # print(np.bincount(train_scores[cur_indexes, 2].astype(int)))
         # print('cur_indexes', cur_indexes.shape)
         batch_indexes = generate_random_batch(cur_indexes, batch_size)
         # print('batch_indexes', batch_indexes.shape)
@@ -276,7 +314,7 @@ def train(sen_dataset_path, train_scores, ranked_index_train_scores,
         train_loss.append(loss.data.item())
 
         # Printing.
-        if (batch + 1) % 100 == 0:
+        if (batch + 1) % 50 == 0:
             acc = accuracy_score(labels, prds)
             conf_m = confusion_matrix(labels, prds)
 
@@ -292,11 +330,11 @@ def train(sen_dataset_path, train_scores, ranked_index_train_scores,
                   " Confusion Matrix= " + np.array_str(conf_m).replace("\n", "")
                   )
 
-        if (batch + 1) % 1000 == 0:
+        if (batch + 1) % 100 == 0:
             # Computing test.
             acc, nacc, cm = val_step(val_dataloader, model, (batch + 1), total_iter)
 
-            save_best_models(model, optimizer, output_path, best_records, batch, acc, nacc, cm)
+            save_best_models(model, optimizer, output_path, best_records, epoch=batch, metric=acc, num_saves=3)
         sys.stdout.flush()
 
         scheduler.step(learning_rate, batch)
@@ -307,42 +345,42 @@ def train(sen_dataset_path, train_scores, ranked_index_train_scores,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument("--sen_dataset_path", type=str, required=False,
-                        default='/home/kno/datasets/SEN12MS/', help="Path to the DFC2020 dataset")
+    parser.add_argument("--dataset_path", type=str, required=False,
+                        default='/home/kno/datasets/df2020/', help="Path to the DFC2020 dataset")
     parser.add_argument("--output_path", type=str, required=False,
-                        default='output/', help="Path to the DFC2020 dataset")
+                        default='output/', help="Path to save outputs")
     parser.add_argument("--weights", type=str, required=False,
-                        default="../weights/RN18-epochepoch=15-val_lossval_loss=0.43.ckpt",
+                        default="weights/RN18-epochepoch=123-val_lossval_loss=0.23.ckpt",
                         help="Path to the pre-trained weights")
-    parser.add_argument("--batch_size", default=128, type=int, help="determine batch size")
-    parser.add_argument("--num_epochs", default=140, type=int, help="number of epochs to train on")
+    parser.add_argument("--batch_size", default=256, type=int, help="determine batch size")
+    parser.add_argument("--num_epochs", default=600, type=int, help="number of epochs to train on")
 
     # optimization / learning rate parameters
-    parser.add_argument("--learning_rate", "-lr", default=0.01, type=float)
+    parser.add_argument("--learning_rate", "-lr", default=0.001, type=float)
     parser.add_argument("--lr_decay_rate", default=1.5, type=float)
-    parser.add_argument("--minimal_lr", default=1e-4, type=float)
+    parser.add_argument("--minimal_lr", default=0.0001, type=float)
     parser.add_argument("--lr_batch_size", default=3000, type=int)
-    parser.add_argument("--weight_decay", default=0.005, type=float)
+    parser.add_argument("--weight_decay", default=0.00001, type=float)
 
     # curriculum params
-    parser.add_argument("--batch_increase", default=1000, type=int,
+    parser.add_argument("--batch_increase", default=500, type=int,
                         help="interval of batches to increase the amount of data we sample from")
-    parser.add_argument("--increase_amount", default=1.9, type=float,
+    parser.add_argument("--increase_amount", default=1.5, type=float,
                         help="factor by which we increase the amount of data we sample from")
-    parser.add_argument("--starting_percent", default=500/11322, type=float,
+    parser.add_argument("--starting_percent", default=1000/4000, type=float,  # 1500/4000
                         help="percent of data to sample from in the inital batch")
-    parser.add_argument("--balance_classes", type=str2bool, required=False, default=False,
-                        help='Balance dataset?')
+    parser.add_argument("--balance_classes", type=str, required=False, default='none',
+                        choices=['full', 'percentage', 'none'], help='Balance dataset?')
 
     args = parser.parse_args()
     print(args)
 
-    ts_path = os.path.join(args.sen_dataset_path, 'train_scores.pkl')
-    rs_path = os.path.join(args.sen_dataset_path, 'ranked_train_scores.pkl')
+    ts_path = os.path.join(args.dataset_path, 'train_scores.pkl')
+    rs_path = os.path.join(args.dataset_path, 'ranked_train_scores.pkl')
 
     if not os.path.exists(ts_path):
         print('creating scores and ranking')
-        train_scores = get_order(args.sen_dataset_path, args.weights)
+        train_scores = get_order(args.dataset_path, args.weights)
         ranked_index_train_scores = rank_data_according_to_score(train_scores)
 
         with open(ts_path, 'wb') as file_pi:
@@ -355,10 +393,13 @@ if __name__ == "__main__":
             train_scores = pickle.load(file_pi)
         with open(rs_path, 'rb') as file_pi:
             ranked_index_train_scores = pickle.load(file_pi)
-    print(train_scores.shape, len(ranked_index_train_scores))
+    print(train_scores.shape, len(ranked_index_train_scores),
+          np.min(ranked_index_train_scores), np.max(ranked_index_train_scores),
+          train_scores[ranked_index_train_scores[0]], train_scores[ranked_index_train_scores[1]],
+          train_scores[ranked_index_train_scores[-1]])
 
-    if args.balance_classes is True:
-        brs_path = os.path.join(args.sen_dataset_path, 'balanced_ranked_train_scores.pkl')
+    if args.balance_classes == 'full':
+        brs_path = os.path.join(args.dataset_path, 'balanced_ranked_train_scores.pkl')
         if not os.path.exists(brs_path):
             ranked_index_train_scores = balance_order(ranked_index_train_scores, train_scores)
             with open(brs_path, 'wb') as file_pi:
@@ -366,12 +407,23 @@ if __name__ == "__main__":
         else:
             with open(brs_path, 'rb') as file_pi:
                 ranked_index_train_scores = pickle.load(file_pi)
-        print('balanced', train_scores.shape, len(ranked_index_train_scores))
+        print('balanced full', train_scores.shape, len(ranked_index_train_scores))
+    elif args.balance_classes == 'percentage':
+        brs_path = os.path.join(args.dataset_path, 'balanced_percentage_ranked_train_scores.pkl')
+        if not os.path.exists(brs_path):
+            ranked_index_train_scores = balance_level_order(ranked_index_train_scores, train_scores)
+            with open(brs_path, 'wb') as file_pi:
+                pickle.dump(ranked_index_train_scores, file_pi)
+        else:
+            with open(brs_path, 'rb') as file_pi:
+                ranked_index_train_scores = pickle.load(file_pi)
+        print('balanced percentage', train_scores.shape, len(ranked_index_train_scores))
 
     total_iter = (args.num_epochs * len(ranked_index_train_scores)) // args.batch_size
+    print('dataset size', len(ranked_index_train_scores))
     print('total_iter', total_iter)
 
-    train(args.sen_dataset_path, train_scores, ranked_index_train_scores,
+    train(args.dataset_path, train_scores, ranked_index_train_scores,
           args.learning_rate, args.lr_decay_rate, args.minimal_lr, args.lr_batch_size, args.weight_decay,
           args.batch_increase, args.increase_amount, args.starting_percent,
           total_iter, args.batch_size, args.output_path)

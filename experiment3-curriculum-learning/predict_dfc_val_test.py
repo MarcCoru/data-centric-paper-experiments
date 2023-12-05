@@ -12,18 +12,21 @@ from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 from common.model import ResNet18
-from common.dfc2020_datamodule import DFC2020Dataset
-from common.transforms import get_classification_transform
+from common.dfc2020_datamodule import DFC2020DataModule
 
 
 @torch.no_grad()
-def test(dfc_root_folder, prefix, weights):
+def test(dfc_root_folder, test_or_val, weights):
     # get test dataloader
-    dataset = DFC2020Dataset(dfc_root_folder, prefix, get_classification_transform(augment=False))
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=False, num_workers=12, drop_last=False)
+    datamodule = DFC2020DataModule(dfc_root_folder, batch_size=256, workers=8)
+    datamodule.setup('train')
+    if test_or_val == 'val' or test_or_val == 'validation':
+        dataloader = datamodule.val_dataloader()
+    else:
+        dataloader = datamodule.test_dataloader()
 
     # Load model
-    model = ResNet18(in_channels=15, num_classes=10)
+    model = ResNet18(in_channels=10, num_classes=8)
     try:
         model.load_state_dict(torch.load(weights)['state_dict'])
     except KeyError:
@@ -40,11 +43,11 @@ def test(dfc_root_folder, prefix, weights):
         preds = model(images)
 
         if first:
-            all_targets = targets.cpu().numpy()
+            all_targets = np.squeeze(targets.cpu().numpy())
             all_preds = preds.cpu().numpy()
             first = False
         else:
-            all_targets = np.concatenate((all_targets, targets.cpu().numpy()))
+            all_targets = np.concatenate((all_targets, np.squeeze(targets.cpu().numpy())))
             all_preds = np.concatenate((all_preds, preds.cpu().numpy()))
 
     print('before', all_targets.shape, all_preds.shape, all_preds[0:2, :])
@@ -73,10 +76,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dfc_root_folder", type=str, required=False, default='/home/kno/datasets/df2020/',
                         help="Path to the DFC2020 dataset")
-    parser.add_argument("--val_or_test", type=str, required=False, default='validation',
-                        help="0 for test, validation for val")
+    parser.add_argument("--val_or_test", type=str, required=False, default='test', help="test or val")
     parser.add_argument("--weights", type=str, required=False,
-                        default="weights/RN18-epochepoch=08-val_lossval_loss=0.49.ckpt",
+                        default="weights/RN18-epochepoch=123-val_lossval_loss=0.23.ckpt",
                         help="Path to the pre-trained weights")
 
     args = parser.parse_args()

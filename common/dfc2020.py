@@ -118,11 +118,56 @@ class DFCDataset(Dataset):
         if self.transforms is not None:
             data_s2 = self.transforms(data_s2)
 
-        return data_s2, label
+        return data_s2, label, self.relative_locations[i]
 
     def __len__(self):
         return len(self.relative_locations)
 
+
+class DFCDatasetBatchLoader:
+    def __init__(self, root, train_scores):
+        super().__init__()
+        self.dataset_directory = root
+        self.train_scores = train_scores
+
+        # look up table for label transform
+        self.label_trans = sen12msDFC_labelTransform()
+
+        self.transforms = augmentation
+
+    def get_batch(self, batch_indexes):
+        images = torch.empty((len(batch_indexes), 10, 256, 256))
+        targets = []
+
+        for i, index in enumerate(batch_indexes):
+            s2_loc = os.path.join(self.dataset_directory, self.train_scores[i][0])
+
+            label_loc = os.path.join(self.dataset_directory,
+                                     self.train_scores[i][0].replace("s2_", "dfc_"))
+
+            assert os.path.isfile(s2_loc), f"image {s2_loc} not found"
+            assert os.path.isfile(label_loc), f"image {label_loc} not found"
+
+            # read s2 image from disk
+            # only take the 10 bands with 10 or 20m GSD
+            data_s2 = load_s2_10Bands(s2_loc).astype("float32")
+            data_s2 = preprocess_s2(data_s2)
+            data_s2 = torch.Tensor(data_s2)
+
+            # label is the maximal occuring landcover class
+            # we tranform to 0-8 classifcation sceme via self.label_trans
+            landcover_data = load_lc_data(label_loc)
+            label_non_transformed = np.argmax(np.bincount(landcover_data.flatten()))
+            label = self.label_trans(label_non_transformed)
+            # label = torch.Tensor([label]).long()
+
+            if self.transforms is not None:
+                data_s2 = self.transforms(data_s2)
+
+            images[i] = torch.from_numpy(data_s2)
+            targets.append(label)
+
+        return images, torch.from_numpy(np.asarray(targets)).long()
 
 
 if __name__ == "__main__":
