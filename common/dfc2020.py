@@ -11,7 +11,8 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 import torch
 from torch.utils.data import Dataset
 
-
+classes = ["Forest", "Shrubland", "Grassland", "Wetlands", "Croplands",
+           "Urban/Built-up", "Barren", "Water"]
 
 def augmentation(input):
     if np.random.rand() < 0.5:
